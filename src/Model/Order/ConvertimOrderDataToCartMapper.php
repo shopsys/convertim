@@ -99,7 +99,7 @@ class ConvertimOrderDataToCartMapper
     protected function applyConvertimTransportToCart(ConvertimOrderData $convertimOrderData, Cart $cart): void
     {
         $transport = $this->transportFacade->getByUuid($convertimOrderData->getTransportData()->getUuid());
-        $cartTransportData = $this->cartTransportDataFactory->create($cart, $transport->getUuid(), null);
+        $cartTransportData = $this->cartTransportDataFactory->create($cart, $transport->getUuid(), $convertimOrderData->getTransportData()->getExtra()?->getPickUpPointCode());
         $cartTransportData->watchedPrice = Money::create($convertimOrderData->getTransportData()->getPriceWithVat());
 
         $cart->editCartTransport($cartTransportData);

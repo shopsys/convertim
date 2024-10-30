@@ -7,6 +7,7 @@ namespace Shopsys\ConvertimBundle\Model\Order;
 use Convertim\Order\ConvertimOrderData;
 use Convertim\Order\ConvertimOrderPaymentData;
 use Convertim\Order\ConvertimOrderTransportData;
+use Shopsys\ConvertimBundle\Model\Product\ProductRepository;
 use Shopsys\FrameworkBundle\Component\Domain\Domain;
 use Shopsys\FrameworkBundle\Component\Money\Money;
 use Shopsys\FrameworkBundle\Model\Cart\CartFacade;
@@ -21,7 +22,7 @@ use Shopsys\FrameworkBundle\Model\Order\OrderDataFactory;
 use Shopsys\FrameworkBundle\Model\Payment\PaymentFacade;
 use Shopsys\FrameworkBundle\Model\Pricing\Currency\CurrencyFacade;
 use Shopsys\FrameworkBundle\Model\Pricing\Price;
-use Shopsys\FrameworkBundle\Model\Product\ProductFacade;
+use Shopsys\FrameworkBundle\Model\Product\Exception\ProductNotFoundException;
 use Shopsys\FrameworkBundle\Model\Store\Exception\StoreByUuidNotFoundException;
 use Shopsys\FrameworkBundle\Model\Store\StoreFacade;
 use Shopsys\FrameworkBundle\Model\Transport\TransportFacade;
@@ -36,11 +37,11 @@ class ConvertimOrderDataToOrderDataMapper
      * @param \Shopsys\FrameworkBundle\Model\Cart\CartFacade $cartFacade
      * @param \Shopsys\FrameworkBundle\Model\Country\CountryFacade $countryFacade
      * @param \Shopsys\FrameworkBundle\Model\Order\Item\OrderItemDataFactory $orderItemDataFactory
-     * @param \Shopsys\FrameworkBundle\Model\Product\ProductFacade $productFacade
      * @param \Shopsys\FrameworkBundle\Model\Transport\TransportFacade $transportFacade
      * @param \Shopsys\FrameworkBundle\Model\Payment\PaymentFacade $paymentFacade
      * @param \Shopsys\FrameworkBundle\Model\Store\StoreFacade $storeFacade
      * @param \Shopsys\FrameworkBundle\Model\Customer\User\CustomerUserFacade $customerUserFacade
+     * @param \Shopsys\ConvertimBundle\Model\Product\ProductRepository $productRepository
      */
     public function __construct(
         protected readonly ConvertimOrderDataToCartMapper $convertimOrderDataToCartMapper,
@@ -50,11 +51,11 @@ class ConvertimOrderDataToOrderDataMapper
         protected readonly CartFacade $cartFacade,
         protected readonly CountryFacade $countryFacade,
         protected readonly OrderItemDataFactory $orderItemDataFactory,
-        protected readonly ProductFacade $productFacade,
         protected readonly TransportFacade $transportFacade,
         protected readonly PaymentFacade $paymentFacade,
         protected readonly StoreFacade $storeFacade,
         protected readonly CustomerUserFacade $customerUserFacade,
+        protected readonly ProductRepository $productRepository,
     ) {
     }
 
@@ -226,8 +227,21 @@ class ConvertimOrderDataToOrderDataMapper
      */
     protected function mapProducts(ConvertimOrderData $convertimOrderData, OrderData $orderData): void
     {
+        $productUuids = array_map(
+            static fn ($convertimOrderItemData) => $convertimOrderItemData->getProductId(),
+            $convertimOrderData->getOrderItemsData(),
+        );
+
+        $productsByUuid = $this->productRepository->getProductsByUuidsIndexedByUuid($productUuids);
+
         foreach ($convertimOrderData->getOrderItemsData() as $convertimOrderItemData) {
-            $product = $this->productFacade->getByUuid($convertimOrderItemData->getProductId());
+            if (!array_key_exists($convertimOrderItemData->getProductId(), $productsByUuid)) {
+                throw new ProductNotFoundException(
+                    sprintf('Product with UUID "%s" not found.', $convertimOrderItemData->getProductId()),
+                );
+            }
+
+            $product = $productsByUuid[$convertimOrderItemData->getProductId()];
 
             $orderItemData = $this->orderItemDataFactory->create(OrderItemTypeEnum::TYPE_PRODUCT);
             $orderItemData->product = $product;

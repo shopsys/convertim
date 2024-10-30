@@ -12,6 +12,7 @@ class ConvertimConfigProvider
 {
     protected const string ENABLED = 'enabled';
     protected const string AUTHORIZATION_HEADER = 'authorizationHeader';
+    protected const string PROJECT_UUID = 'projectUuid';
 
     /**
      * @var \Shopsys\ConvertimBundle\Model\Convertim\ConvertimConfig[]
@@ -37,6 +38,7 @@ class ConvertimConfigProvider
             $this->configsByDomainId[$domainId] = new ConvertimConfig(
                 $configResolver[static::ENABLED],
                 $configResolver[static::AUTHORIZATION_HEADER],
+                $configResolver[static::PROJECT_UUID],
             );
         }
     }
@@ -50,9 +52,11 @@ class ConvertimConfigProvider
             ->setRequired([
                 static::ENABLED,
                 static::AUTHORIZATION_HEADER,
+                static::PROJECT_UUID,
             ])
             ->setAllowedTypes(static::ENABLED, ['bool'])
-            ->setAllowedTypes(static::AUTHORIZATION_HEADER, ['string']);
+            ->setAllowedTypes(static::AUTHORIZATION_HEADER, ['string'])
+            ->setAllowedTypes(static::PROJECT_UUID, ['string']);
     }
 
     /**

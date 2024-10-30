@@ -5,27 +5,36 @@ declare(strict_types=1);
 namespace Shopsys\ConvertimBundle\Model\Order;
 
 use Convertim\Order\ConvertimOrderData;
+use Convertim\Order\ConvertimOrderItemData;
 use Convertim\Order\ConvertimOrderPaymentData;
 use Convertim\Order\ConvertimOrderTransportData;
 use Shopsys\ConvertimBundle\Model\Product\ProductRepository;
 use Shopsys\FrameworkBundle\Component\Domain\Domain;
 use Shopsys\FrameworkBundle\Component\Money\Money;
+use Shopsys\FrameworkBundle\Component\Translation\Translator;
 use Shopsys\FrameworkBundle\Model\Cart\CartFacade;
 use Shopsys\FrameworkBundle\Model\Country\Country;
 use Shopsys\FrameworkBundle\Model\Country\CountryFacade;
 use Shopsys\FrameworkBundle\Model\Country\Exception\CountryNotFoundException;
 use Shopsys\FrameworkBundle\Model\Customer\User\CustomerUserFacade;
+use Shopsys\FrameworkBundle\Model\Order\Item\OrderItemData;
 use Shopsys\FrameworkBundle\Model\Order\Item\OrderItemDataFactory;
 use Shopsys\FrameworkBundle\Model\Order\Item\OrderItemTypeEnum;
 use Shopsys\FrameworkBundle\Model\Order\OrderData;
 use Shopsys\FrameworkBundle\Model\Order\OrderDataFactory;
+use Shopsys\FrameworkBundle\Model\Order\PromoCode\Exception\PromoCodeNotFoundException;
+use Shopsys\FrameworkBundle\Model\Order\PromoCode\PromoCodeFacade;
+use Shopsys\FrameworkBundle\Model\Order\PromoCode\PromoCodeTypeEnum;
 use Shopsys\FrameworkBundle\Model\Payment\PaymentFacade;
 use Shopsys\FrameworkBundle\Model\Pricing\Currency\CurrencyFacade;
 use Shopsys\FrameworkBundle\Model\Pricing\Price;
 use Shopsys\FrameworkBundle\Model\Product\Exception\ProductNotFoundException;
+use Shopsys\FrameworkBundle\Model\Product\Product;
 use Shopsys\FrameworkBundle\Model\Store\Exception\StoreByUuidNotFoundException;
 use Shopsys\FrameworkBundle\Model\Store\StoreFacade;
 use Shopsys\FrameworkBundle\Model\Transport\TransportFacade;
+use Shopsys\FrameworkBundle\Twig\NumberFormatterExtension;
+use Shopsys\FrameworkBundle\Twig\PriceExtension;
 
 class ConvertimOrderDataToOrderDataMapper
 {
@@ -42,6 +51,9 @@ class ConvertimOrderDataToOrderDataMapper
      * @param \Shopsys\FrameworkBundle\Model\Store\StoreFacade $storeFacade
      * @param \Shopsys\FrameworkBundle\Model\Customer\User\CustomerUserFacade $customerUserFacade
      * @param \Shopsys\ConvertimBundle\Model\Product\ProductRepository $productRepository
+     * @param \Shopsys\FrameworkBundle\Model\Order\PromoCode\PromoCodeFacade $promoCodeFacade
+     * @param \Shopsys\FrameworkBundle\Twig\NumberFormatterExtension $numberFormatterExtension
+     * @param \Shopsys\FrameworkBundle\Twig\PriceExtension $priceExtension
      */
     public function __construct(
         protected readonly ConvertimOrderDataToCartMapper $convertimOrderDataToCartMapper,
@@ -56,6 +68,9 @@ class ConvertimOrderDataToOrderDataMapper
         protected readonly StoreFacade $storeFacade,
         protected readonly CustomerUserFacade $customerUserFacade,
         protected readonly ProductRepository $productRepository,
+        protected readonly PromoCodeFacade $promoCodeFacade,
+        protected readonly NumberFormatterExtension $numberFormatterExtension,
+        protected readonly PriceExtension $priceExtension,
     ) {
     }
 
@@ -258,6 +273,7 @@ class ConvertimOrderDataToOrderDataMapper
 
             $orderData->addItem($orderItemData);
             $orderData->addTotalPrice(new Price($orderItemData->totalPriceWithoutVat, $orderItemData->totalPriceWithVat), OrderItemTypeEnum::TYPE_PRODUCT);
+            $this->mapDiscounts($convertimOrderItemData, $product, $orderItemData, $orderData);
         }
     }
 
@@ -268,5 +284,65 @@ class ConvertimOrderDataToOrderDataMapper
     protected function mapPromoCodes(ConvertimOrderData $convertimOrderData, OrderData $orderData): void
     {
         $orderData->promoCode = $convertimOrderData->getPromoCodes()[0]->getCode();
+    }
+
+    /**
+     * @param \Convertim\Order\ConvertimOrderItemData $convertimOrderItemData
+     * @param \Shopsys\FrameworkBundle\Model\Product\Product $product
+     * @param \Shopsys\FrameworkBundle\Model\Order\Item\OrderItemData $orderItemData
+     * @param \Shopsys\FrameworkBundle\Model\Order\OrderData $orderData
+     */
+    protected function mapDiscounts(
+        ConvertimOrderItemData $convertimOrderItemData,
+        Product $product,
+        OrderItemData $orderItemData,
+        OrderData $orderData,
+    ): void {
+        /** @var array{ withVat: int|float, withoutVat: int|float } $discount */
+        foreach ($convertimOrderItemData->getDiscounts() as $promoCodesCode => $discount) {
+            $promoCode = $this->promoCodeFacade->findPromoCodeByCodeAndDomain($promoCodesCode, $this->domain->getId());
+
+            if ($promoCode === null) {
+                throw new PromoCodeNotFoundException(
+                    sprintf('Promo code with code "%s" not found.', $promoCodesCode),
+                );
+            }
+
+            $discountOrderItemData = $this->orderItemDataFactory->create(OrderItemTypeEnum::TYPE_DISCOUNT);
+
+            $totalWithoutVat = Money::create((string)$discount['withoutVat']);
+            $totalWithVat = Money::create((string)$discount['withVat']);
+            $unitWithoutVat = $totalWithoutVat->divide($convertimOrderItemData->getQuantity(), 6);
+            $unitWithVat = $totalWithVat->divide($convertimOrderItemData->getQuantity(), 6);
+            $unitPrice = (new Price($unitWithoutVat, $unitWithVat))->inverse();
+            $totalPrice = (new Price($totalWithoutVat, $totalWithVat))->inverse();
+
+            if ($promoCode->getDiscountType() === PromoCodeTypeEnum::PERCENT) {
+                $name = sprintf(
+                    '%s -%s - %s',
+                    t('Promo code', [], Translator::DEFAULT_TRANSLATION_DOMAIN, $this->domain->getLocale()),
+                    $this->numberFormatterExtension->formatPercent((string)$discount['withVat']),
+                    $product->getName(),
+                );
+            } else {
+                $name = sprintf(
+                    '%s %s',
+                    t('Promo code', [], Translator::DEFAULT_TRANSLATION_DOMAIN, $this->domain->getLocale()),
+                    $this->priceExtension->priceFilter($totalWithVat),
+                );
+            }
+
+            $discountOrderItemData->name = $name;
+            $discountOrderItemData->quantity = 1;
+            $discountOrderItemData->setUnitPrice($unitPrice);
+            $discountOrderItemData->setTotalPrice($totalPrice);
+            $discountOrderItemData->vatPercent = $orderItemData->vatPercent;
+            $discountOrderItemData->promoCode = $promoCode;
+            $discountOrderItemData->usePriceCalculation = false;
+
+            $orderData->addItem($discountOrderItemData);
+            $orderData->addTotalPrice(new Price($discountOrderItemData->totalPriceWithoutVat, $discountOrderItemData->totalPriceWithVat), OrderItemTypeEnum::TYPE_DISCOUNT);
+            $orderItemData->relatedOrderItemsData[] = $discountOrderItemData;
+        }
     }
 }

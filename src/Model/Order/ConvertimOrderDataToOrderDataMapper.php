@@ -283,7 +283,11 @@ class ConvertimOrderDataToOrderDataMapper
      */
     protected function mapPromoCodes(ConvertimOrderData $convertimOrderData, OrderData $orderData): void
     {
-        $orderData->promoCode = $convertimOrderData->getPromoCodes()[0]->getCode();
+        $promoCodes = $convertimOrderData->getPromoCodes();
+
+        if (count($promoCodes) > 0) {
+            $orderData->promoCode = $promoCodes[0]->getCode();
+        }
     }
 
     /**
